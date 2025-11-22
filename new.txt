@@ -1,0 +1,774 @@
+# GENAI-SHOPPING-PROJECT (Node.js) — Full Code
+
+> A complete intermediate-level project that streams e-commerce events through Apache Kafka and persists selected data into PostgreSQL. Includes Docker Compose for Kafka, Node.js producers/consumers using `kafkajs`, and PostgreSQL integration using `pg`.
+
+---
+
+## File tree
+
+```
+GENAI-SHOPPING-PROJECT/
+
+├── kafka/
+│   ├── docker-compose.yml
+│   └── create-topics.sh
+│
+├── config/
+│   ├── kafkaConfig.js
+│   ├── topics.js
+│   └── dbConfig.js
+│
+├── database/
+│   └── postgresClient.js
+│
+├── producers/
+│   ├── cart-producer/
+│   │   ├── cartProducer.js
+│   │   └── cartData.json
+│   │
+│   ├── order-producer/
+│   │   ├── orderProducer.js
+│   │   └── orderData.json
+│   │
+│   └── payment-producer/
+│       ├── paymentProducer.js
+│       └── paymentData.json
+│
+├── consumers/
+│   ├── inventory-consumer/
+│   │   └── inventoryConsumer.js
+│   │
+│   ├── notification-consumer/
+│   │   └── notificationConsumer.js
+│   │
+│   └── analytics-consumer/
+│       └── analyticsConsumer.js
+│
+├── services/
+│   ├── inventoryService.js
+│   ├── notificationService.js
+│   └── analyticsService.js
+│
+├── sql/
+│   └── schema.sql
+│
+├── package.json
+├── .env.example
+└── README.md
+```
+
+---
+
+> **Important**: This document contains all code blocks for every file. You can copy files into a new project directory that matches the tree above.
+
+---
+
+## `kafka/docker-compose.yml`
+
+```yaml
+version: '3.8'
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.1
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:0.9.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: 'kafka:9092'
+      KAFKA_CLUSTERS_0_ZOOKEEPER: 'zookeeper:2181'
+    depends_on:
+      - kafka
+```
+
+> Run `docker-compose up -d` inside the `kafka/` folder to start Zookeeper + Kafka + a simple UI.
+
+---
+
+## `kafka/create-topics.sh`
+
+```bash
+#!/bin/bash
+# create topics using kafka-topics tool inside the Kafka container
+# run: sh create-topics.sh
+
+TOPICS=("cart-events" "order-events" "payment-events" "inventory-updates" "user-notifications" "analytics-stream")
+
+for t in "${TOPICS[@]}"; do
+  echo "Creating topic: $t"
+  docker exec -it $(docker ps --filter "ancestor=confluentinc/cp-kafka" --format "{{.ID}}" | head -n1) \
+    kafka-topics --create --topic "$t" --bootstrap-server localhost:9092 --replication-factor 1 --partitions 3 || true
+done
+
+echo "Done"
+```
+
+---
+
+## `package.json`
+
+```json
+{
+  "name": "GENAI-SHOPPING-PROJECT",
+  "version": "1.0.0",
+  "description": "Kafka shopping pipeline (Node.js) with PostgreSQL",
+  "main": "index.js",
+  "scripts": {
+    "start:cart": "node producers/cart-producer/cartProducer.js",
+    "start:order": "node producers/order-producer/orderProducer.js",
+    "start:payment": "node producers/payment-producer/paymentProducer.js",
+    "start:inventory": "node consumers/inventory-consumer/inventoryConsumer.js",
+    "start:notification": "node consumers/notification-consumer/notificationConsumer.js",
+    "start:analytics": "node consumers/analytics-consumer/analyticsConsumer.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0"
+  }
+}
+```
+
+---
+
+## `.env.example`
+
+```
+# Postgres
+PG_HOST=localhost
+PG_PORT=5432
+PG_USER=postgres
+PG_PASSWORD=your_password
+PG_DATABASE=shoppingdb
+
+# Kafka
+KAFKA_BROKERS=localhost:9092
+KAFKA_CLIENT_ID=shopping-app
+```
+
+---
+
+## `config/kafkaConfig.js`
+
+```js
+require('dotenv').config();
+
+module.exports = {
+  clientId: process.env.KAFKA_CLIENT_ID || 'shopping-app',
+  brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(',')
+};
+```
+
+---
+
+## `config/topics.js`
+
+```js
+module.exports = {
+  CART: 'cart-events',
+  ORDER: 'order-events',
+  PAYMENT: 'payment-events',
+  INVENTORY: 'inventory-updates',
+  NOTIFY: 'user-notifications',
+  ANALYTICS: 'analytics-stream'
+};
+```
+
+---
+
+## `config/dbConfig.js`
+
+```js
+require('dotenv').config();
+
+module.exports = {
+  host: process.env.PG_HOST || 'localhost',
+  port: process.env.PG_PORT || 5432,
+  user: process.env.PG_USER || 'postgres',
+  password: process.env.PG_PASSWORD || 'your_password',
+  database: process.env.PG_DATABASE || 'shoppingdb'
+};
+```
+
+---
+
+## `database/postgresClient.js`
+
+```js
+const { Pool } = require('pg');
+const dbConfig = require('../config/dbConfig');
+
+const pool = new Pool(dbConfig);
+
+pool.on('connect', () => console.log('Postgres client connected'));
+pool.on('error', (err) => console.error('Postgres error', err));
+
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool
+};
+```
+
+---
+
+## `sql/schema.sql`
+
+```sql
+-- run this in psql to create tables
+
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  order_id VARCHAR(100) UNIQUE NOT NULL,
+  user_id VARCHAR(100) NOT NULL,
+  total NUMERIC(12,2) NOT NULL,
+  items JSONB NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS inventory (
+  id SERIAL PRIMARY KEY,
+  product_id VARCHAR(100) UNIQUE NOT NULL,
+  name VARCHAR(255),
+  stock INTEGER DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS analytics (
+  id SERIAL PRIMARY KEY,
+  metric VARCHAR(100) NOT NULL,
+  payload JSONB,
+  recorded_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+---
+
+## Producers (all use `kafkajs`)
+
+### `producers/cart-producer/cartData.json`
+
+```json
+[
+  { "eventType": "ADD_ITEM", "userId": "U1001", "productId": "P21", "quantity": 1, "timestamp": 1731593200 },
+  { "eventType": "ADD_ITEM", "userId": "U1002", "productId": "P10", "quantity": 2, "timestamp": 1731593220 },
+  { "eventType": "REMOVE_ITEM", "userId": "U1001", "productId": "P21", "quantity": 1, "timestamp": 1731593240 }
+]
+```
+
+### `producers/cart-producer/cartProducer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const fs = require('fs');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const producer = kafka.producer();
+  await producer.connect();
+
+  const data = JSON.parse(fs.readFileSync(__dirname + '/cartData.json'));
+
+  for (const ev of data) {
+    await producer.send({
+      topic: topics.CART,
+      messages: [{ value: JSON.stringify(ev) }]
+    });
+    console.log('Sent cart event:', ev);
+  }
+
+  await producer.disconnect();
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+### `producers/order-producer/orderData.json`
+
+```json
+[
+  {
+    "orderId": "O1001",
+    "userId": "U1001",
+    "total": 1299.00,
+    "items": [ { "productId": "P21", "qty": 1 }, { "productId": "P10", "qty": 2 } ],
+    "timestamp": 1731593250
+  }
+]
+```
+
+### `producers/order-producer/orderProducer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const fs = require('fs');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const producer = kafka.producer();
+  await producer.connect();
+
+  const data = JSON.parse(fs.readFileSync(__dirname + '/orderData.json'));
+
+  for (const order of data) {
+    await producer.send({
+      topic: topics.ORDER,
+      messages: [{ value: JSON.stringify(order) }]
+    });
+    console.log('Sent order:', order.orderId);
+  }
+
+  await producer.disconnect();
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+### `producers/payment-producer/paymentData.json`
+
+```json
+[
+  { "paymentId": "PAY1001", "orderId": "O1001", "status": "SUCCESS", "mode": "CARD", "timestamp": 1731593300 }
+]
+```
+
+### `producers/payment-producer/paymentProducer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const fs = require('fs');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const producer = kafka.producer();
+  await producer.connect();
+
+  const data = JSON.parse(fs.readFileSync(__dirname + '/paymentData.json'));
+
+  for (const p of data) {
+    await producer.send({
+      topic: topics.PAYMENT,
+      messages: [{ value: JSON.stringify(p) }]
+    });
+    console.log('Sent payment event:', p.paymentId);
+  }
+
+  await producer.disconnect();
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+## Consumers
+
+> All consumers use `kafkajs` and will write/read from PostgreSQL via `database/postgresClient.js` and services.
+
+### `consumers/inventory-consumer/inventoryConsumer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const inventoryService = require('../../services/inventoryService');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const consumer = kafka.consumer({ groupId: 'inventory-group' });
+
+  await consumer.connect();
+  await consumer.subscribe({ topic: topics.ORDER, fromBeginning: true });
+  await consumer.subscribe({ topic: topics.PAYMENT, fromBeginning: true });
+
+  await consumer.run({
+    eachMessage: async ({ topic, message }) => {
+      const value = message.value.toString();
+      try {
+        const payload = JSON.parse(value);
+        if (topic === topics.ORDER) {
+          console.log('Inventory consumer got order:', payload.orderId);
+          await inventoryService.reserveStock(payload);
+        } else if (topic === topics.PAYMENT) {
+          console.log('Inventory consumer got payment:', payload.paymentId);
+          if (payload.status === 'SUCCESS') {
+            await inventoryService.reduceStock(payload.orderId);
+          } else {
+            await inventoryService.releaseStock(payload.orderId);
+          }
+        }
+      } catch (err) {
+        console.error('inventory consumer error', err, value);
+      }
+    }
+  });
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+### `consumers/notification-consumer/notificationConsumer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const notificationService = require('../../services/notificationService');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const consumer = kafka.consumer({ groupId: 'notification-group' });
+
+  await consumer.connect();
+  await consumer.subscribe({ topic: topics.ORDER, fromBeginning: true });
+  await consumer.subscribe({ topic: topics.PAYMENT, fromBeginning: true });
+
+  await consumer.run({
+    eachMessage: async ({ topic, message }) => {
+      try {
+        const payload = JSON.parse(message.value.toString());
+        if (topic === topics.ORDER) {
+          await notificationService.sendOrderConfirmation(payload);
+        } else if (topic === topics.PAYMENT) {
+          await notificationService.sendPaymentStatus(payload);
+        }
+      } catch (err) {
+        console.error('notification consumer error', err);
+      }
+    }
+  });
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+### `consumers/analytics-consumer/analyticsConsumer.js`
+
+```js
+const { Kafka } = require('kafkajs');
+const kafkaConfig = require('../../config/kafkaConfig');
+const topics = require('../../config/topics');
+const analyticsService = require('../../services/analyticsService');
+
+async function run() {
+  const kafka = new Kafka(kafkaConfig);
+  const consumer = kafka.consumer({ groupId: 'analytics-group' });
+
+  await consumer.connect();
+  await consumer.subscribe({ topic: topics.CART, fromBeginning: true });
+  await consumer.subscribe({ topic: topics.ORDER, fromBeginning: true });
+  await consumer.subscribe({ topic: topics.PAYMENT, fromBeginning: true });
+
+  await consumer.run({
+    eachMessage: async ({ topic, message }) => {
+      try {
+        const payload = JSON.parse(message.value.toString());
+        await analyticsService.processEvent(topic, payload);
+      } catch (err) {
+        console.error('analytics consumer error', err);
+      }
+    }
+  });
+}
+
+run().catch(err => console.error(err));
+```
+
+---
+
+## Services (business logic)
+
+### `services/inventoryService.js`
+
+```js
+const db = require('../database/postgresClient');
+
+// NOTE: This is simplified example code. In production you would
+// handle transactions, product lookups and proper error handling.
+
+async function reserveStock(order) {
+  // record a reservation row or mark order as reserved (example: write to analytics)
+  console.log('Reserving stock for order', order.orderId);
+  // store analytic event
+  await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['reserve_stock', JSON.stringify(order)]);
+}
+
+async function reduceStock(orderId) {
+  console.log('Reducing stock for order', orderId);
+  // In a real system: join order items, decrement inventory rows
+  await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['reduce_stock', JSON.stringify({ orderId })]);
+}
+
+async function releaseStock(orderId) {
+  console.log('Releasing stock for order', orderId);
+  await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['release_stock', JSON.stringify({ orderId })]);
+}
+
+module.exports = { reserveStock, reduceStock, releaseStock };
+```
+
+---
+
+### `services/notificationService.js`
+
+```js
+// This file simulates sending emails / SMS. Replace with real provider integration in prod.
+
+async function sendOrderConfirmation(order) {
+  console.log(`Send ORDER confirmation to user ${order.userId} for order ${order.orderId}`);
+}
+
+async function sendPaymentStatus(payment) {
+  console.log(`Send PAYMENT status ${payment.status} for order ${payment.orderId}`);
+}
+
+module.exports = { sendOrderConfirmation, sendPaymentStatus };
+```
+
+---
+
+### `services/analyticsService.js`
+
+```js
+const db = require('../database/postgresClient');
+
+async function processEvent(topic, payload) {
+  if (topic.includes('cart')) {
+    await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['cart_event', JSON.stringify(payload)]);
+    console.log('Analytics stored cart event');
+  } else if (topic.includes('order')) {
+    await db.query('INSERT INTO orders(order_id, user_id, total, items) VALUES($1, $2, $3, $4) ON CONFLICT (order_id) DO NOTHING', [payload.orderId, payload.userId, payload.total, JSON.stringify(payload.items)]);
+    await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['order_event', JSON.stringify(payload)]);
+    console.log('Analytics stored order event');
+  } else if (topic.includes('payment')) {
+    await db.query('INSERT INTO analytics(metric, payload) VALUES($1, $2)', ['payment_event', JSON.stringify(payload)]);
+    console.log('Analytics stored payment event');
+  }
+}
+
+module.exports = { processEvent };
+```
+
+---
+
+## `README.md` (quick start)
+
+```markdown
+# GENAI Shopping Project (Node.js)
+
+## Prerequisites
+- Docker & Docker Compose
+- Node.js 16+
+- PostgreSQL running (or use local install)
+
+## 1) Start Kafka
+cd kafka
+docker-compose up -d
+
+## 2) Create topics
+# run this after kafka container is up
+sh create-topics.sh
+
+## 3) Setup PostgreSQL
+# create DB `shoppingdb` and run `sql/schema.sql` to create tables
+
+## 4) Install dependencies
+cd ..
+npm install
+
+## 5) Edit `.env` (copy from .env.example)
+
+## 6) Run producers/consumers
+# producers
+npm run start:cart
+npm run start:order
+npm run start:payment
+
+# consumers (in separate terminals)
+npm run start:inventory
+npm run start:notification
+npm run start:analytics
+
+## Notes
+- This is a simplified example for learning. In production: use idempotency, transactional DB updates, proper error handling and monitoring.
+```
+
+---
+
+## Final notes
+
+* The code is intentionally simple and educational. Replace analytic inserts with proper queries, and manage inventory via reserved + committed stock in real systems.
+* If you want, I can also:
+
+  * provide a `docker-compose` service for PostgreSQL
+  * convert services to TypeScript
+  * add tests
+  * add a small frontend simulator to push events
+
+---
+
+*End of project package*
+
+---
+
+## Added: Docker Compose for PostgreSQL + App (optional)
+
+To make the project fully dockerized (Kafka is already in `kafka/docker-compose.yml`), this section adds a root-level `docker-compose.postgres.yml` and a `Dockerfile` for the Node.js app so you can run PostgreSQL and the Node.js consumers/producers in containers.
+
+### `docker-compose.postgres.yml`
+
+```yaml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:14
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: your_password
+      POSTGRES_DB: shoppingdb
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  genai-app:
+    build: .
+    depends_on:
+      - postgres
+      - kafka
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=your_password
+      - PG_DATABASE=shoppingdb
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=genai-shopping-app
+    volumes:
+      - ./:/usr/src/app
+    command: sh -c "npm run start:inventory & npm run start:notification & npm run start:analytics"
+    ports:
+      - "3000:3000"
+
+networks:
+  default:
+    external:
+      name: genai_default
+```
+
+> **Notes:**
+>
+> * This compose file expects the Kafka stack to be running in a Docker network named `genai_default`. If you started `kafka/docker-compose.yml` earlier, create a network and run both compose files attached to the same network, or merge the files together (recommended).
+
+### `Dockerfile` (root)
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+CMD ["sh", "-c", "npm run start:inventory & npm run start:notification & npm run start:analytics"]
+```
+
+### How to run everything together (recommended approach)
+
+1. Start Kafka stack (from `kafka/`):
+
+```bash
+cd kafka
+docker-compose up -d
+```
+
+2. Create Kafka topics (wait until Kafka is up):
+
+```bash
+sh create-topics.sh
+```
+
+3. Create a Docker network and merge the stacks (optional but easiest):
+
+```bash
+# create a shared network
+docker network create genai_default
+
+# bring up kafka stack attached to that network
+cd kafka
+docker-compose down
+docker-compose up -d
+# connect kafka containers to genai_default if not automatically attached
+docker network connect genai_default $(docker ps --filter "ancestor=confluentinc/cp-kafka" --format "{{.ID}}" | head -n1)
+
+# from project root: run postgres + app
+docker-compose -f docker-compose.postgres.yml up -d --build
+```
+
+4. Run schema creation (inside postgres container or using local psql):
+
+```bash
+# copy schema into postgres container and run
+docker cp sql/schema.sql $(docker ps --filter "ancestor=postgres:14" --format "{{.ID}}" | head -n1):/schema.sql
+docker exec -it $(docker ps --filter "ancestor=postgres:14" --format "{{.ID}}" | head -n1) psql -U postgres -d shoppingdb -f /schema.sql
+```
+
+5. Start producers (locally or inside container):
+
+```bash
+# locally (simpler) - ensure .env points to kafka:9092 if running in containers
+npm run start:cart
+npm run start:order
+npm run start:payment
+```
+
+Or, to run producers in the container, change the `command` in `docker-compose.postgres.yml` to include producer start commands as well.
+
+---
+
+### Merge suggestion (single docker-compose)
+
+If you prefer a single compose file, you can merge `kafka/docker-compose.yml` and `docker-compose.postgres.yml` into `docker-compose.yml` at the project root so everything comes up with `docker-compose up -d`.
+
+---
+
+If you'd like, I can now:
+
+* Create the merged `docker-compose.yml` for you and add it to the project file in the document, or
+* Build a ZIP of the full project so you can download it, or
+* Launch step-by-step terminal commands customized for your OS (macOS/Linux)
+
+Tell me which one you want and I will add it into the document.

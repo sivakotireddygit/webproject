@@ -1,0 +1,46 @@
+/* ====== Booking API ====== */
+const BOOKING_API_URL = "http://localhost:5000/api/bookings";
+
+/* ====== Booking loader ====== */
+interface Booking {
+  id: number;
+  customer_name: string;
+  drink_name: string;
+  price: number;
+  time: string;
+}
+
+async function loadBookings() {
+  try {
+    const res = await fetch(BOOKING_API_URL);
+    if (!res.ok) throw new Error('Network error');
+
+    const bookings: Booking[] = await res.json();
+
+    const bookingList = document.getElementById('bookingList');
+    if (!bookingList) {
+      console.warn('bookingList element not found');
+      return;
+    }
+
+    bookingList.innerHTML = '';
+
+    bookings
+      .sort((a: Booking, b: Booking) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      .forEach((b: Booking) => {
+        const li = document.createElement('li');
+        li.textContent = `${b.customer_name} ordered ${b.drink_name} — ₹${b.price} at ${new Date(b.time).toLocaleString()}`;
+        bookingList.appendChild(li);
+      });
+  } catch (err) {
+    console.warn('Could not load bookings', err);
+  }
+}
+
+/* ====== Run everything once page loads ====== */
+document.addEventListener('DOMContentLoaded', () => {
+  renderMenu();
+  updateCartUI();
+  populateBookingSelect();
+  loadBookings(); // ✅ correct naming
+});

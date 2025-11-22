@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>☕ Hearth & Beans</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <!-- ====== Header ====== -->
+  <header>
+    <nav class="navbar">
+      <h1 class="logo">☕ Hearth & Beans</h1>
+
+      <ul class="nav-links">
+        <li><a href="#home">Home</a></li>
+        <li><a href="#menu">Menu</a></li>
+        <li><a href="#booking">Book</a></li>
+      </ul>
+
+      <div style="display:flex;gap:12px;align-items:center">
+        <button id="darkModeToggle" class="cta-btn" title="Toggle theme">🌙</button>
+        <button id="cartBtn" class="cart-btn" aria-haspopup="true" aria-expanded="false">
+          🛒 <span class="cart-count">0</span>
+        </button>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ====== Cart Panel ====== -->
+  <aside id="cartPanel" class="cart-panel" aria-hidden="true">
+    <div class="cart-header">
+      <h2>Your Cart</h2>
+      <button id="closeCart" class="close-cart" aria-label="Close cart">×</button>
+    </div>
+
+    <div class="cart-items" id="cartItems" role="list"></div>
+
+    <div class="cart-footer">
+      <div class="cart-total">
+        <span>Total:</span>
+        <span id="totalAmount">₹0</span>
+      </div>
+      <div class="cart-actions">
+        <button id="clearCart" class="clear-btn">Clear Cart</button>
+        <button id="checkoutBtn" class="checkout-btn">Checkout</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- overlay to close cart when clicking outside -->
+  <div id="overlay" class="overlay" hidden></div>
+
+  <!-- ====== Hero Section ====== -->
+  <section id="home" class="hero">
+    <div class="hero-content">
+      <h2>Wake up to the perfect coffee beans</h2>
+      <p>Handcrafted coffee made with love and precision — now with Indian flavors.</p>
+      <button class="cta-btn" onclick="document.getElementById('menu').scrollIntoView({behavior:'smooth'})">
+        Explore Menu
+      </button>
+    </div>
+  </section>
+
+  <!-- ====== Menu Section ====== -->
+  <section id="menu" class="menu">
+    <h2>Our Specialties — Indian Edition</h2>
+
+    <div class="filter-buttons">
+      <button data-filter="all" class="active">All</button>
+      <button data-filter="filter-coffee">Filter Coffee</button>
+      <button data-filter="masala">Masala Lattes</button>
+      <button data-filter="cold">Cold Brews</button>
+      <button data-filter="fusion">Fusion Snacks</button>
+    </div>
+
+    <div class="menu-grid" id="menuGrid" aria-live="polite"></div>
+  </section>
+
+  <!-- ====== Booking Section ====== -->
+  <section id="booking" class="booking">
+    <div class="container">
+      <h2>Book Your Coffee</h2>
+
+      <!-- Booking Form -->
+      <form id="bookingForm" class="booking-form">
+        <input id="customerName" placeholder="Your Name" required />
+        <select id="coffeeType" required>
+          <option value="">Select Coffee</option>
+        </select>
+        <button type="submit" class="submit-btn">Book Now</button>
+      </form>
+
+      <!-- Booking Dashboard -->
+      <div class="bookings-container">
+        <h3>Booking History</h3>
+
+        <!-- Filters -->
+        <div class="booking-filters">
+          <input type="text" id="searchBooking" placeholder="🔍 Search customer or drink" />
+          <label>From:</label>
+          <input type="date" id="fromDate" />
+          <label>To:</label>
+          <input type="date" id="toDate" />
+          <button id="filterBtn" class="filter-btn">Apply Filter</button>
+          <button id="clearFilterBtn" class="clear-btn">Clear</button>
+        </div>
+
+        <!-- Booking Table -->
+        <div class="table-wrap">
+          <table class="booking-table">
+            <thead>
+              <tr>
+                <th>Customer Name</th>
+                <th>Drink Name</th>
+                <th>Price (₹)</th>
+                <th>Date & Time</th>
+              </tr>
+            </thead>
+            <tbody id="bookingList"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== Footer ====== -->
+  <footer class="footer">
+    <p>📍 3rd Line, Vasanth Nagar, Coffee City, India</p>
+    <p>📞 +91 6327272727 | ✉️ hello@hearthbeans.example</p>
+    <div class="socials">
+      <a href="#">Instagram</a> |
+      <a href="#">Twitter</a> |
+      <a href="#">Facebook</a>
+    </div>
+    <p>© 2025 Hearth & Beans</p>
+  </footer>
+
+  <!-- JS -->
+  <script src="script.js" defer></script>
+</body>
+</html>
